@@ -1,0 +1,34 @@
+---
+title: "Simulations"
+author: "Sam Bogan"
+date: '2023-01-27'
+output: html_document
+---
+
+This markdown includes simulations of genetically-correlating gene expression traits and DNA methylation of corresponding gene bodies across 80 RNA-seq replicates derived froma 40 full-/half-sib families split and reared across two environments.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("~/Documents/GitHub/Methyl_QG_Spurp/")
+
+# Load packages
+library(tidyverse)
+library(nadiv)
+library(brms)
+
+```
+
+Simulate data for one gene with genetic and environmental effects on DNA methylation and gene expression
+
+```{r}
+
+# Write out experimental pedigree
+pedi <- read.csv("pedigree.csv")
+
+# With nadiv, create a relatedness matrix, not an inverse relatedness matrix, which is necessary for brms
+relat_m <- as.matrix(makeA(pedig))
+
+
+```
+
