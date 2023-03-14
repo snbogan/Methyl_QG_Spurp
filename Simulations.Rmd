@@ -16,6 +16,7 @@ setwd("~/Documents/GitHub/Methyl_QG_Spurp/")
 library(tidyverse)
 library(nadiv)
 library(brms)
+library(MASS)
 
 ```
 
@@ -23,11 +24,104 @@ Simulate data for one gene with genetic and environmental effects on DNA methyla
 
 ```{r}
 
-# Write out experimental pedigree
+# Create experimental pedigree
 pedi <- read.csv("pedigree.csv")
+pedi_p <- prepPed(pedi)
 
-# With nadiv, create a relatedness matrix, not an inverse relatedness matrix, which is necessary for brms
-relat_m <- as.matrix(makeA(pedig))
+#  Read in metadata
+meta_df <- read.csv("pedigree_meta.csv")
+
+# With nadiv, create a relatedness matrix
+# Relatedness matrix is necessary for brms rather than inverse relatedness
+relat_m <- as.matrix(makeA(pedi_p))
+
+```
+
+```{r}
+
+# Simulate correlating gene expression and metadata
+samples = 80 
+r = 0.66
+
+sim1_df = as.data.frame(mvrnorm(n=samples, mu=c(0, 0), 
+                                Sigma=matrix(c(1, r, r, 1), nrow=2), 
+                                empirical=TRUE))
+
+names(sim1_df) <- c("GE", "M")
+
+
+# Bind simulated data with metadata
+meta_df <- cbind(meta_df, sim1_df)
+
+# Create ordinal methylation quantiles
+meta_df <- meta_df %>%
+    mutate(quantile = ntile(meta_df, 4))
+
+```
+
+Fit brms animal using code from example by Julien Martin
+https://juliengamartin.github.io/wam_tuto/brms-1.html
+
+```{r}
+
+# Fit multivariate model partitioning VA by methylation
+brms_m1.1 <- brm(
+  bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
+       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) +
+    bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
+         F0_env + F1_env + (1 | Dam) + (1 | Sire)) + set_rescor(FALSE),
+  data = meta_df,
+  data2 = list(relat_m = relat_m),
+  family = gaussian(),
+  chains = 1, cores = 1, iter = 1000
+)
+
+# Estimate h2 grouped by methylation quantile
+Var.table <- as_draws_df(brms_m1.1)
+
+Var.table$h.bwt.1 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile1`)^2 / 
+                               ((Var.table$`sd_ID__GE_Intercept:quantile1`)^2 + 
+                                  (Var.table$sd_Dam__GE_Intercept)^2 + 
+                                  (Var.table$sd_Sire__GE_Intercept)^2))
+
+Var.table$h.bwt.2 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile2`)^2 / 
+                               ((Var.table$`sd_ID__GE_Intercept:quantile2`)^2 + 
+                                  (Var.table$sd_Dam__GE_Intercept)^2 + 
+                                  (Var.table$sd_Sire__GE_Intercept)^2))
+
+Var.table$h.bwt.3 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile3`)^2 / 
+                               ((Var.table$`sd_ID__GE_Intercept:quantile3`)^2 + 
+                                  (Var.table$sd_Dam__GE_Intercept)^2 + 
+                                  (Var.table$sd_Sire__GE_Intercept)^2))
+
+Var.table$h.bwt.4 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile4`)^2 / 
+                               ((Var.table$`sd_ID__GE_Intercept:quantile4`)^2 + 
+                                  (Var.table$sd_Dam__GE_Intercept)^2 + 
+                                  (Var.table$sd_Sire__GE_Intercept)^2))
+
+
+# Create df of h2 measures
+h2.methyl <- as.data.frame(rbind(
+  cbind(summary(Var.table$h.bwt.1)$statistics[1], summary(Var.table$h.bwt.1)$quantiles[1], summary(Var.table$h.bwt.1)$quantiles[5]),
+  cbind(summary(Var.table$h.bwt.2)$statistics[1], summary(Var.table$h.bwt.2)$quantiles[1], summary(Var.table$h.bwt.2)$quantiles[5]),
+  cbind(summary(Var.table$h.bwt.3)$statistics[1], summary(Var.table$h.bwt.3)$quantiles[1], summary(Var.table$h.bwt.3)$quantiles[5]),
+  cbind(summary(Var.table$h.bwt.4)$statistics[1], summary(Var.table$h.bwt.4)$quantiles[1], summary(Var.table$h.bwt.4)$quantiles[5])
+))
+
+# Add methylation quantile to df as variable 
+h2.methyl$quant <- c(1, 2, 3, 4)
+
+# Plot h2 grouped by methylation quantile
+ggplot(data = h2.methyl,
+       aes(x = V1, y = quant, group = as.factor(quant), color = quant)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(xmin = V2, xmax = V3), width = 0) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  scale_color_viridis_c() +
+  labs(y = "Methylation quartile", x = expression(italic("h")^2))
+  
+
 
 
 ```
