@@ -9,6 +9,7 @@ This markdown includes simulations of genetically-correlating gene expression tr
 
 Current problem: I want to determine the effect of a continuous predictor on variation explained by a random effect. Presently, I can only do this by binning my methylation into quartiles. 
 
+Potential solution: hierarchical model predicting covariance between genetic and methylation effects?
 
 Spurs QG to do:
 
@@ -86,6 +87,7 @@ https://juliengamartin.github.io/wam_tuto/brms-1.html
 # Fit multivariate model (GE and M) partitioning VA by methylation
 f1 <- bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
        F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+
 f2 <- bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
          F0_env + F1_env + (1 | Dam) + (1 | Sire))
 
@@ -95,6 +97,20 @@ brms_m1.1 <- brm(f1 + f2 + set_rescor(FALSE),
   family = gaussian(),
   chains = 1, cores = 1, iter = 1000
 )
+
+# Account for interaction between meth and VA
+f1b <- bf(GE ~ 1 + (1 + M | gr(ID, cov = relat_m)) + # Fits relatedness matrix w/ meth partitions for GE
+       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+
+brms_m1.2 <- brm(f1b + f2 + set_rescor(FALSE), 
+  data = meta_df,
+  data2 = list(relat_m = relat_m),
+  family = gaussian(),
+  chains = 1, cores = 1, iter = 1000
+)
+
+# Report correlation alternative model
+# cor() represents  posterior correlation matrix of the model's effects
 
 ```
 #Effect of methylation on expression via genetic variance
