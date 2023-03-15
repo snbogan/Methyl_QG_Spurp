@@ -7,6 +7,15 @@ output: html_document
 
 This markdown includes simulations of genetically-correlating gene expression traits and DNA methylation of corresponding gene bodies across 80 RNA-seq replicates derived froma 40 full-/half-sib families split and reared across two environments.
 
+Spurs QG to do:
+
+1. Perform statistical test for differences in VA, h2, etc.
+2. Estimate indirect effects of M on GE via mediation
+3. Measure and plot phenome wide distributions of VA and h2 by heritability
+4. Look into 'family means' animal model
+5. Simulate 100 independent traits
+6. Add gaussian process for genetic correlation to model
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -17,6 +26,9 @@ library(tidyverse)
 library(nadiv)
 library(brms)
 library(MASS)
+library(holodeck)
+library(bayestestR)
+library(rstanarm)
 
 ```
 
@@ -39,23 +51,29 @@ relat_m <- as.matrix(makeA(pedi_p))
 
 ```{r}
 
-# Simulate correlating gene expression and metadata
-samples = 80 
-r = 0.66
+# Simulate correlating correlations between maternal environment, methylation and gene expression
+meta_df <- meta_df %>% 
+  group_by(F0_env) %>% 
+  sim_discr(n_vars = 2, var = 1, cov = 0.66, group_means = c(1, -1))
 
-sim1_df = as.data.frame(mvrnorm(n=samples, mu=c(0, 0), 
-                                Sigma=matrix(c(1, r, r, 1), nrow=2), 
-                                empirical=TRUE))
+meta_df <- meta_df %>% rename("GE" = "V1",
+                              "M" = "V2")
 
-names(sim1_df) <- c("GE", "M")
+# Plot correlations
+ggplot(data = meta_df,
+       aes(x = M, y = GE)) +
+  geom_smooth(method = "lm") +
+  geom_point(aes(color = F0_env)) +
+  theme_classic() +
+  labs(color = "Maternal env", x = "Methylation", y = "Expression")
 
-
-# Bind simulated data with metadata
-meta_df <- cbind(meta_df, sim1_df)
-
+## To partition VA by methylation and differential methylation, creating quantiles for each
 # Create ordinal methylation quantiles
 meta_df <- meta_df %>%
-    mutate(quantile = ntile(meta_df, 4))
+    mutate(quantile = ntile(M, 4))
+
+# Create ordinal diff meth quantiles
+
 
 ```
 
@@ -64,18 +82,24 @@ https://juliengamartin.github.io/wam_tuto/brms-1.html
 
 ```{r}
 
-# Fit multivariate model partitioning VA by methylation
-brms_m1.1 <- brm(
-  bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
-       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) +
-    bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
-         F0_env + F1_env + (1 | Dam) + (1 | Sire)) + set_rescor(FALSE),
+# Fit multivariate model (GE and M) partitioning VA by methylation
+f1 <- bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
+       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+f2 <- bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
+         F0_env + F1_env + (1 | Dam) + (1 | Sire))
+
+brms_m1.1 <- brm(f1 + f2 + set_rescor(FALSE), 
   data = meta_df,
   data2 = list(relat_m = relat_m),
   family = gaussian(),
   chains = 1, cores = 1, iter = 1000
 )
 
+```
+#Effect of methylation on expression via genetic variance
+Export $V_A$ then calculate and plot $h^2$
+
+```{r}
 # Estimate h2 grouped by methylation quantile
 Var.table <- as_draws_df(brms_m1.1)
 
@@ -121,8 +145,28 @@ ggplot(data = h2.methyl,
   scale_color_viridis_c() +
   labs(y = "Methylation quartile", x = expression(italic("h")^2))
   
+```
 
+#Effect of environment on gene expression methylation
+Input model results into mediation analysis
 
+```{r}
+
+# First, extract posterior samples
+post <- posterior_samples(brms_m1.1)
+
+# Calculate indirect effect by multiplying draws of mediator and predictor variables
+post <-
+  post %>% 
+  mutate(ind = b_M_F0_envU * b_GE_M)
+
+# Plot posterior distribution of indirect effect
+post %>% 
+  ggplot(aes(x = ind)) +
+  geom_density(color = "black", fill = "skyblue") + 
+  geom_vline(xintercept = 0, lty = 2, size = 1) +
+  labs(y = "Density", x = "Mediation effect (posterior)") +
+  theme_classic()
 
 ```
 
