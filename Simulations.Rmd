@@ -7,14 +7,15 @@ output: html_document
 
 This markdown includes simulations of genetically-correlating gene expression traits and DNA methylation of corresponding gene bodies across 80 RNA-seq replicates derived froma 40 full-/half-sib families split and reared across two environments.
 
+Current problem: I want to determine the effect of a continuous predictor on variation explained by a random effect. Presently, I can only do this by binning my methylation into quartiles. 
+
+
 Spurs QG to do:
 
-1. Perform statistical test for differences in VA, h2, etc.
-2. Estimate indirect effects of M on GE via mediation
-3. Measure and plot phenome wide distributions of VA and h2 by heritability
-4. Look into 'family means' animal model
-5. Simulate 100 independent traits
-6. Add gaussian process for genetic correlation to model
+1. Measure and plot phenome wide distributions of VA and h2 by heritability
+2. Look into 'family means' animal model
+3. Simulate 100 independent traits
+4. Add gaussian process for genetic correlation to model
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -123,7 +124,6 @@ Var.table$h.bwt.4 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile4`)^2 /
                                   (Var.table$sd_Dam__GE_Intercept)^2 + 
                                   (Var.table$sd_Sire__GE_Intercept)^2))
 
-
 # Create df of h2 measures
 h2.methyl <- as.data.frame(rbind(
   cbind(summary(Var.table$h.bwt.1)$statistics[1], summary(Var.table$h.bwt.1)$quantiles[1], summary(Var.table$h.bwt.1)$quantiles[5]),
@@ -147,13 +147,27 @@ ggplot(data = h2.methyl,
   
 ```
 
-#Effect of environment on gene expression methylation
-Input model results into mediation analysis
-
 ```{r}
 
 # First, extract posterior samples
 post <- posterior_samples(brms_m1.1)
+
+# Hypothesis testing for differences in VA
+bf <- bayesfactor_parameters(post$`sd_ID__GE_Intercept:quantile1`, 
+                             post$`sd_ID__GE_Intercept:quantile4`,
+                             direction = "two-sided", 
+                             null = median(post$`sd_ID__GE_Intercept:quantile4`))
+
+bf
+
+plot(bf)
+```
+
+
+#Effect of environment on gene expression methylation
+Input model results into mediation analysis
+
+```{r}
 
 # Calculate indirect effect by multiplying draws of mediator and predictor variables
 post <-
@@ -164,7 +178,7 @@ post <-
 post %>% 
   ggplot(aes(x = ind)) +
   geom_density(color = "black", fill = "skyblue") + 
-  geom_vline(xintercept = 0, lty = 2, size = 1) +
+  geom_vline(xintercept = 0, lty = 2, size = 1, color = "grey") +
   labs(y = "Density", x = "Mediation effect (posterior)") +
   theme_classic()
 
