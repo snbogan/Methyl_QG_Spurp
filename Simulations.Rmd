@@ -5,18 +5,14 @@ date: '2023-01-27'
 output: html_document
 ---
 
-This markdown includes simulations of genetically-correlating gene expression traits and DNA methylation of corresponding gene bodies across 80 RNA-seq replicates derived froma 40 full-/half-sib families split and reared across two environments.
+This markdown includes simulations of genetically-correlating gene expression traits and DNA methylation of corresponding gene bodies across 80 RNA-seq replicates derived froma 40 half sib or unrelated families split and reared across two environments.
 
-Current problem: I want to determine the effect of a continuous predictor on variation explained by a random effect. Presently, I can only do this by binning my methylation into quartiles. 
+To do:
 
-Potential solution: hierarchical model predicting covariance between genetic and methylation effects?
-
-Spurs QG to do:
-
-1. Measure and plot phenome wide distributions of VA and h2 by heritability
-2. Look into 'family means' animal model
-3. Simulate 100 independent traits
-4. Add gaussian process for genetic correlation to model
+1. Look into applying 'family means' approach to animal model
+2. Simulate 100-1000 gene expression traits
+3. Measure genetic correlation between traits
+4. Measure and plot phenome wide distributions of $V_A$ and $h^2$ by heritability
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -35,7 +31,7 @@ library(bayesplot)
 
 ```
 
-Simulate data for one gene with genetic and environmental effects on DNA methylation and gene expression
+Simulate data for one gene with genetic and environmental effects on DNA methylation and gene expression using holodeck
 
 ```{r}
 
@@ -71,9 +67,6 @@ ggplot(data = meta_df,
 meta_df <- meta_df %>%
     mutate(quantile = ntile(M, 4))
 
-# Create ordinal diff meth quantiles
-
-
 ```
 
 Fit brms animal using code from example by Julien Martin
@@ -81,6 +74,7 @@ https://juliengamartin.github.io/wam_tuto/brms-1.html
 
 ```{r}
 
+## This first model will partition VA by methylation quantiles
 # Fit multivariate model (GE and M) partitioning VA by methylation
 f1 <- bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits matrix w/ meth partitions for GE
        F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Env. + dam/sire effects on GE
@@ -114,10 +108,15 @@ mcmc_areas(brms_m1.1,
 ```
 
 ```{r}
+
+## This second model employs covariance between methylation's effect on expression and VA for expression
 # Account for interaction between meth and VA
 f1b <- bf(GE ~ 1 + (0 + M | gr(ID, cov = relat_m)) + # Fit matrix w/ meth cov
             (1 | gr(ID, cov = relat_m)) + # Fit regular matrix
        F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+
+f2 <- bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
+         F0_env + F1_env + (1 | Dam) + (1 | Sire))
 
 brms_m1.2 <- brm(f1b + f2 + set_rescor(FALSE), 
   data = meta_df,
@@ -140,10 +139,10 @@ mcmc_areas(brms_m1.2,
 
 
 ```
-#Effect of methylation on expression via genetic variance
-Export $V_A$ then calculate and plot $h^2$
+Export $V_A$ then calculate and plot $h^2$ (currently estimtes are a work in progress)
 
 ```{r}
+
 # Estimate h2 grouped by methylation quantile
 Var.table <- as_draws_df(brms_m1.1)
 
@@ -213,7 +212,6 @@ bf
 plot(bf)
 ```
 
-
 #Effect of environment on gene expression methylation
 Input model results into mediation analysis
 
@@ -238,7 +236,7 @@ post %>%
   theme_classic()
 
 ```
-
+Estimate effect of methylation on $V_{GxE}$: cross-environment genetic correlation grouped by methylation quantile
 ```{r}
 
 # Fit model that contains cross-environment genetic correlations partitioned by methylation
