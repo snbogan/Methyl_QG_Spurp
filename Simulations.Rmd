@@ -31,6 +31,7 @@ library(MASS)
 library(holodeck)
 library(bayestestR)
 library(rstanarm)
+library(bayesplot)
 
 ```
 
@@ -49,11 +50,7 @@ meta_df <- read.csv("pedigree_meta.csv")
 # Relatedness matrix is necessary for brms rather than inverse relatedness
 relat_m <- as.matrix(makeA(pedi_p))
 
-```
-
-```{r}
-
-# Simulate correlating correlations between maternal environment, methylation and gene expression
+# Simulate correlations between maternal environment, methylation and gene expression
 meta_df <- meta_df %>% 
   group_by(F0_env) %>% 
   sim_discr(n_vars = 2, var = 1, cov = 0.66, group_means = c(1, -1))
@@ -85,8 +82,8 @@ https://juliengamartin.github.io/wam_tuto/brms-1.html
 ```{r}
 
 # Fit multivariate model (GE and M) partitioning VA by methylation
-f1 <- bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
-       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+f1 <- bf(GE ~ 1 + (1 | gr(ID, cov = relat_m, by = quantile)) + # Fits matrix w/ meth partitions for GE
+       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Env. + dam/sire effects on GE
 
 f2 <- bf(M ~ 1 + (1 | gr(ID, cov = relat_m)) + # Fits relatedness matrix for M
          F0_env + F1_env + (1 | Dam) + (1 | Sire))
@@ -95,22 +92,52 @@ brms_m1.1 <- brm(f1 + f2 + set_rescor(FALSE),
   data = meta_df,
   data2 = list(relat_m = relat_m),
   family = gaussian(),
-  chains = 1, cores = 1, iter = 1000
+  chains = 4, cores = 1, iter = 40000
 )
 
+plot(brms_m1.1)
+
+mcmc_pairs(brms_m1.1, pars = c("sd_ID__GE_Intercept:quantile1",
+                               "sd_ID__GE_Intercept:quantile2",
+                               "sd_ID__GE_Intercept:quantile3",
+                               "sd_ID__GE_Intercept:quantile4"))
+
+mcmc_areas(brms_m1.1,
+           pars = c("sd_ID__GE_Intercept:quantile1",
+                               "sd_ID__GE_Intercept:quantile2",
+                               "sd_ID__GE_Intercept:quantile3",
+                               "sd_ID__GE_Intercept:quantile4"),
+           prob = 0.95) +
+  labs(x = expression(italic(V)["A"]), y = "Meth quartiles")
+
+
+```
+
+```{r}
 # Account for interaction between meth and VA
-f1b <- bf(GE ~ 1 + (1 + M | gr(ID, cov = relat_m)) + # Fits relatedness matrix w/ meth partitions for GE
+f1b <- bf(GE ~ 1 + (0 + M | gr(ID, cov = relat_m)) + # Fit matrix w/ meth cov
+            (1 | gr(ID, cov = relat_m)) + # Fit regular matrix
        F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
 
 brms_m1.2 <- brm(f1b + f2 + set_rescor(FALSE), 
   data = meta_df,
   data2 = list(relat_m = relat_m),
   family = gaussian(),
-  chains = 1, cores = 1, iter = 1000
+  chains = 4, cores = 1, iter = 40000
 )
+
+plot(brms_m1.2)
 
 # Report correlation alternative model
 # cor() represents  posterior correlation matrix of the model's effects
+mcmc_pairs(brms_m1.2, pars = c("b_GE_M", "sd_ID__GE_M"))
+
+mcmc_areas(brms_m1.2,
+           pars = c("sd_ID__GE_M", "sd_ID__GE_Intercept"),
+           prob = 0.95) +
+  labs(x = expression(italic(V)["A"]), y = "Parameter")
+
+
 
 ```
 #Effect of methylation on expression via genetic variance
@@ -120,25 +147,32 @@ Export $V_A$ then calculate and plot $h^2$
 # Estimate h2 grouped by methylation quantile
 Var.table <- as_draws_df(brms_m1.1)
 
+v_r <- (VarCorr(brms_m1.2, summary = FALSE)$residual$sd)^2
+
+
 Var.table$h.bwt.1 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile1`)^2 / 
                                ((Var.table$`sd_ID__GE_Intercept:quantile1`)^2 + 
                                   (Var.table$sd_Dam__GE_Intercept)^2 + 
-                                  (Var.table$sd_Sire__GE_Intercept)^2))
+                                  (Var.table$sd_Sire__GE_Intercept)^2 +
+                                  (Var.table$sigma_GE)^2))
 
 Var.table$h.bwt.2 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile2`)^2 / 
                                ((Var.table$`sd_ID__GE_Intercept:quantile2`)^2 + 
                                   (Var.table$sd_Dam__GE_Intercept)^2 + 
-                                  (Var.table$sd_Sire__GE_Intercept)^2))
+                                  (Var.table$sd_Sire__GE_Intercept)^2 +
+                                  (Var.table$sigma_GE)^2))
 
 Var.table$h.bwt.3 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile3`)^2 / 
                                ((Var.table$`sd_ID__GE_Intercept:quantile3`)^2 + 
                                   (Var.table$sd_Dam__GE_Intercept)^2 + 
-                                  (Var.table$sd_Sire__GE_Intercept)^2))
+                                  (Var.table$sd_Sire__GE_Intercept)^2 +
+                                  (Var.table$sigma_GE)^2))
 
 Var.table$h.bwt.4 <- as.mcmc((Var.table$`sd_ID__GE_Intercept:quantile4`)^2 / 
                                ((Var.table$`sd_ID__GE_Intercept:quantile4`)^2 + 
                                   (Var.table$sd_Dam__GE_Intercept)^2 + 
-                                  (Var.table$sd_Sire__GE_Intercept)^2))
+                                  (Var.table$sd_Sire__GE_Intercept)^2 +
+                                  (Var.table$sigma_GE)^2))
 
 # Create df of h2 measures
 h2.methyl <- as.data.frame(rbind(
@@ -191,12 +225,45 @@ post <-
   mutate(ind = b_M_F0_envU * b_GE_M)
 
 # Plot posterior distribution of indirect effect
+mcmc_areas(post,
+           pars = c("ind"),
+           prob = 0.95) +
+  labs(x = "Effect on GE", y = "Density")
+
 post %>% 
   ggplot(aes(x = ind)) +
   geom_density(color = "black", fill = "skyblue") + 
   geom_vline(xintercept = 0, lty = 2, size = 1, color = "grey") +
   labs(y = "Density", x = "Mediation effect (posterior)") +
   theme_classic()
+
+```
+
+```{r}
+
+# Fit model that contains cross-environment genetic correlations partitioned by methylation
+f1c <- bf(GE ~ 1 + (0 + F1_env | gr(ID, cov = relat_m, by = quantile)) + # Fits relatedness matrix w/ meth partitions for GE
+       F0_env + F1_env + (1 | Dam) + (1 | Sire) + M) # Environ. + dam/sire effects on GE
+
+brms_m1.3 <- brm(f1c + f2 + set_rescor(FALSE), 
+  data = meta_df,
+  data2 = list(relat_m = relat_m),
+  family = gaussian(),
+  chains = 4, cores = 1, iter = 40000
+)
+
+plot(brms_m1.3)
+
+summary(brms_m1.3)
+  
+mcmc_areas(brms_m1.3,
+           pars = c("cor_ID__GE_F1_envN:quantile1__GE_F1_envU:quantile1",
+                    "cor_ID__GE_F1_envN:quantile2__GE_F1_envU:quantile2",
+                    "cor_ID__GE_F1_envN:quantile3__GE_F1_envU:quantile3",
+                    "cor_ID__GE_F1_envN:quantile4__GE_F1_envU:quantile4"),
+           prob = 0.95) +
+  labs(x = "Cross-env genetic correlation", y = "Methylation quantile") #+
+ # theme(axis.text.y = element_blank())
 
 ```
 
